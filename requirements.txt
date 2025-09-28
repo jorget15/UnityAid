@@ -27,3 +27,6 @@ geopy>=2.4.0
 
 # Natural language processing for location extraction
 spacy>=3.7.0
+
+# spaCy English language model for NLP location extraction
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

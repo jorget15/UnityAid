@@ -71,6 +71,20 @@ GOOGLE_API_KEY=your_google_api_key_here
 streamlit run app_streamlit.py
 ```
 
+## 🌐 **Deployment**
+
+**Ready to deploy?** UnityAid can be deployed on **Streamlit Community Cloud** for free!
+
+👉 **[Complete Deployment Guide →](DEPLOYMENT.md)**
+
+Quick deploy:
+1. Push to GitHub
+2. Connect to [share.streamlit.io](https://share.streamlit.io)  
+3. Add your Google API key to secrets
+4. Deploy in 5 minutes! 🚀
+
+---
+
 6. **Access the application**:
    - Open your browser to: http://localhost:8501
    - Start submitting tickets and managing disaster response!
@@ -296,6 +310,133 @@ STREAMLIT_SERVER_ADDRESS=localhost
 - A: Provide more detailed initial descriptions
 - Consider adjusting confidence threshold in config
 
+## 🔮 Next Steps - Future Roadmap
+
+UnityAid is designed to evolve into a comprehensive **Agentic Disaster Response Ecosystem**. Here are the planned enhancements that will transform the system into a fully autonomous emergency coordination platform:
+
+### 🔗 **Phase 1: Event Deduplication Agent**
+**Smart Ticket Bundling & Duplicate Detection**
+
+- **Intelligent Event Correlation**: Deploy an AI agent that automatically identifies when multiple tickets pertain to the same incident
+- **Cross-Reference Analysis**: 
+  - Geographic clustering (same location, nearby coordinates)
+  - Temporal correlation (reports within similar timeframes)
+  - Semantic similarity (same type of emergency, similar descriptions)
+  - Reporter analysis (multiple people reporting the same visible event)
+- **Automatic Bundling**: Group related tickets into unified incident reports
+- **Confidence Scoring**: Provide transparency on correlation certainty
+- **Manual Override**: Allow dispatchers to merge/separate tickets when needed
+
+**Benefits**: Reduces dispatcher workload, prevents resource duplication, provides clearer situational awareness
+
+### 📞 **Phase 2: Voice-to-Ticket Chatbot**
+**AI-Powered Call Transcription & Processing**
+
+- **Real-Time Transcription**: Convert emergency calls to text using advanced speech-to-text models
+- **Conversational AI Integration**: 
+  - Extract key information during live calls
+  - Ask clarifying questions automatically
+  - Provide guidance to callers while collecting data
+- **Automatic Ticket Generation**: Create structured tickets from call transcripts
+- **Multi-Language Support**: Handle calls in multiple languages with translation
+- **Priority Escalation**: Instantly elevate critical calls to human dispatchers
+- **Call Analytics**: Track call patterns, response times, and outcome metrics
+
+**Integration Points**:
+- Voice recognition → Text processing → PrioritizerAgent → Ticket creation
+- Location extraction from verbal descriptions ("near the CVS on 5th Street")
+- Emotional tone analysis for urgency assessment
+
+### 🤖 **Phase 3: Agentic Dispatch System**
+**Fully Autonomous Emergency Coordination**
+
+**Multi-Agent Architecture**:
+- **Dispatch Coordinator**: Central orchestrator managing all response activities  
+- **Resource Allocation Agent**: Optimizes resource assignment based on capacity, location, and expertise
+- **Route Optimization Agent**: Calculates fastest response paths considering traffic, road conditions
+- **Communication Agent**: Handles all stakeholder notifications and updates
+- **Learning Agent**: Continuously improves system performance based on outcomes
+
+**Advanced Capabilities**:
+- **Predictive Resource Deployment**: Pre-position resources based on historical patterns and current conditions
+- **Dynamic Re-routing**: Adjust response plans in real-time as situations evolve
+- **Cross-Jurisdiction Coordination**: Automatically coordinate with neighboring emergency services
+- **Outcome Tracking**: Monitor response effectiveness and continuously optimize
+- **Integration APIs**: Connect with existing CAD systems, hospital networks, and government databases
+
+**Intelligence Features**:
+- **Weather Integration**: Factor weather conditions into response planning
+- **Traffic Analysis**: Use real-time traffic data for optimal routing
+- **Resource Learning**: Build profiles of resource capabilities and performance
+- **Historical Analysis**: Learn from past incidents to improve future responses
+
+### 🏗️ **Technical Architecture Evolution**
+
+**Phase 1 Architecture**:
+```
+UnityAid → Event Deduplication Agent → Unified Incident Reports
+```
+
+**Phase 2 Architecture**:
+```
+Voice Calls → Transcription Service → Chatbot Agent → Ticket Generation → UnityAid
+```
+
+**Phase 3 Architecture**:
+```
+Multiple Input Channels → Agentic Dispatch System → Coordinated Response
+├── Voice Calls        ├── Dispatch Coordinator
+├── Web Tickets        ├── Resource Allocation Agent  
+├── Mobile Apps        ├── Route Optimization Agent
+├── IoT Sensors        ├── Communication Agent
+└── External APIs      └── Learning Agent
+```
+
+### 📈 **Implementation Timeline**
+
+**Q1 2025**: Event Deduplication Agent
+- Semantic similarity analysis
+- Geographic clustering algorithms
+- Confidence scoring system
+- Basic bundling interface
+
+**Q2 2025**: Voice-to-Ticket System  
+- Speech-to-text integration
+- Conversational AI enhancement
+- Multi-language support
+- Call analytics dashboard
+
+**Q3-Q4 2025**: Agentic Dispatch System
+- Multi-agent coordination framework
+- Predictive analytics integration
+- Cross-system API development
+- Performance optimization
+
+### 🎯 **Expected Impact**
+
+**Current State**:
+- Manual ticket triage and routing
+- Individual incident processing
+- Human-driven resource allocation
+
+**Future State**:
+- **90% automation** in routine emergency processing
+- **50% faster** response times through optimization
+- **Zero duplicate responses** through intelligent bundling  
+- **Predictive deployment** reducing average response time
+- **Cross-jurisdictional coordination** for major incidents
+
+**Success Metrics**:
+- Response time reduction
+- Resource utilization efficiency  
+- Incident resolution rates
+- System reliability and uptime
+- User satisfaction scores
+
+---
+
+*This roadmap positions UnityAid as the foundation for next-generation emergency response - where AI agents work seamlessly with human expertise to save more lives, faster.*
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -310,39 +451,5 @@ This project is open source - see LICENSE file for details.
 ---
 
 *UnityAid represents the next generation of disaster response coordination, combining human expertise with intelligent AI assistance to save lives more effectively.*
-      - '8000:8000'
-    depends_on:
-      - redis
-  categorizer:
-    build: .
-    command: python categorizer_agent.py
-    depends_on:
-      - backend
-      - redis
-  matcher:
-    build: .
-    command: python matcher_agent.py
-    depends_on:
-      - backend
-      - redis
-```
-
-You can adapt the backend to use Redis pub/sub and bridge A2A via Redis; if you want I can scaffold that bridge so the backend uses Redis and the SSE relays messages from Redis to clients.
-
-## Logs
-
-The app writes rotating logs to `logs/unityaid.log`. If you don't see logs, ensure the `logs/` directory exists and the process user can write to it.
-
-## Troubleshooting
-
-- Port already in use: stop other uvicorn processes or change `--port`.
-- SSE not receiving events: SSE is in-memory and per-process; ensure you're connected to the same process that runs the background agent (don't use multiple uvicorn workers with `--workers > 1` unless you switch to an external pub/sub).
-- If endpoints return 404, ensure the server is running and you are using the correct host/port.
-
-## Next steps / optional
-
-- Wire persistent storage for reports/resources
-- Replace in-memory pub/sub with Redis pub/sub for multi-worker SSE
-- Add tests that validate enqueue -> agent matching -> event emission
 
 

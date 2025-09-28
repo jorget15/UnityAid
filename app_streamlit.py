@@ -6,9 +6,21 @@ import json
 import os
 import time
 from typing import Optional, Literal, Dict, List
-from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime
+
+def get_api_key(key_name: str, default: str = None) -> str:
+    """Get API key from environment variables or Streamlit secrets."""
+    # Try environment variable first
+    value = os.getenv(key_name, default)
+    if value:
+        return value
+    
+    # Try Streamlit secrets as fallback
+    try:
+        return st.secrets[key_name]
+    except (KeyError, AttributeError):
+        return default
 import folium
 from streamlit_folium import st_folium
 
@@ -70,14 +82,10 @@ def seed_resources():
 
 # Initialize session state
 def init_session_state():
-    if 'reports' not in st.session_state:
-        st.session_state.reports = {}
     if 'resources' not in st.session_state:
         st.session_state.resources = {}
     if 'tickets' not in st.session_state:
         st.session_state.tickets = {}
-    if 'queue' not in st.session_state:
-        st.session_state.queue = deque(maxlen=1000)
     if 'initialized' not in st.session_state:
         seed_resources()
         st.session_state.initialized = True
@@ -123,19 +131,21 @@ def create_interactive_map(center_lat=25.77, center_lon=-80.19, zoom=10, key="ma
         tiles="OpenStreetMap"
     )
     
-    # Add existing reports as markers
-    for report in st.session_state.reports.values():
-        popup_text = f"""
-        <b>Report {report.id}</b><br>
-        Category: {report.category}<br>
-        Urgency: {report.urgency}/5<br>
-        Description: {report.description[:50]}...
-        """
-        folium.Marker(
-            location=[report.lat, report.lon],
-            popup=folium.Popup(popup_text, max_width=200),
-            icon=folium.Icon(color='red', icon='exclamation-sign')
-        ).add_to(m)
+    # Add existing tickets as markers
+    for ticket in st.session_state.tickets.values():
+        if ticket.lat and ticket.lon:
+            popup_text = f"""
+            <b>Ticket {ticket.id[:8]}</b><br>
+            Title: {ticket.title}<br>
+            Priority: {ticket.priority}/5<br>
+            Status: {ticket.status}<br>
+            Description: {ticket.description[:50]}...
+            """
+            folium.Marker(
+                location=[ticket.lat, ticket.lon],
+                popup=folium.Popup(popup_text, max_width=200),
+                icon=folium.Icon(color='blue', icon='info-sign')
+            ).add_to(m)
     
     # Add existing resources as markers
     for resource in st.session_state.resources.values():
@@ -249,11 +259,11 @@ def ai_qualify_urgency(text: str, use_conversation: bool = True) -> dict:
     
     # Try Google Generative AI if available
     try:
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = get_api_key("GOOGLE_API_KEY")
         if api_key:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
+            model_name = get_api_key("GOOGLE_MODEL", "gemini-1.5-flash")
             model = genai.GenerativeModel(model_name)
             prompt = (
                 "You are a disaster response triage assistant. "
@@ -297,11 +307,11 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None, enhanced_
     
     # Try Google Generative AI for title
     try:
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = get_api_key("GOOGLE_API_KEY")
         if api_key:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
+            model_name = get_api_key("GOOGLE_MODEL", "gemini-1.5-flash")
             model = genai.GenerativeModel(model_name)
             prompt = (
                 "Create a concise, action-oriented title (max 6 words) for a disaster response ticket.\n"
@@ -372,22 +382,6 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None, enhanced_
         "conversation_id": urgency_result.get('conversation_id')
     }
 
-def process_queue():
-    """Process queued reports for categorization and matching."""
-    if st.session_state.queue:
-        rid = st.session_state.queue.popleft()
-        rep = st.session_state.reports.get(rid)
-        if rep:
-            rep.category = categorize(rep.description)
-            res = match_resource(rep)
-            if res:
-                rep.matched_resource_id = res.id
-                res.capacity = max(res.capacity - 1, 0)
-                st.session_state.resources[res.id] = res
-                st.session_state.reports[rid] = rep
-                return True
-    return False
-
 # Initialize session state
 init_session_state()
 
@@ -395,7 +389,6 @@ init_session_state()
 st.sidebar.title("🆘 UnityAid")
 page = st.sidebar.selectbox("Navigate", [
     "Dashboard", 
-    "View Reports", 
     "Resources", 
     "Submit a Ticket",
     "Map View"
@@ -404,85 +397,27 @@ page = st.sidebar.selectbox("Navigate", [
 if page == "Dashboard":
     st.title("UnityAid Dashboard")
     
-    # Process queue automatically
-    if st.button("🔄 Process Queue", help="Process pending reports"):
-        processed = process_queue()
-        if processed:
-            st.success("✅ Processed a report from queue!")
-            st.rerun()
-        else:
-            st.info("Queue is empty")
-    
     # Stats
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Reports", len(st.session_state.reports))
-    with col2:
         st.metric("Resources", len(st.session_state.resources))
-    with col3:
+    with col2:
         st.metric("Tickets", len(st.session_state.tickets))
-    with col4:
-        st.metric("Queue Size", len(st.session_state.queue))
     
-    # Recent activity
-    st.subheader("Recent Reports")
-    if st.session_state.reports:
-        reports_list = list(st.session_state.reports.values())
-        for report in sorted(reports_list, key=lambda x: x.id, reverse=True)[:5]:
-            with st.expander(f"Report {report.id} - {report.category.title()}"):
-                st.write(f"**Description:** {report.description}")
-                st.write(f"**Location:** ({report.lat:.3f}, {report.lon:.3f})")
-                st.write(f"**Urgency:** {report.urgency}/5")
-                if report.matched_resource_id:
-                    resource = st.session_state.resources.get(report.matched_resource_id)
-                    if resource:
-                        st.success(f"✅ Matched to: {resource.name}")
-                else:
-                    st.warning("❌ No resource matched")
+    # Recent Tickets
+    st.subheader("Recent Tickets")
+    if st.session_state.tickets:
+        tickets_list = list(st.session_state.tickets.values())
+        for ticket in sorted(tickets_list, key=lambda x: x.created_at, reverse=True)[:5]:
+            status_color = {"open": "🔴", "in_progress": "🟡", "closed": "🟢"}
+            with st.expander(f"{status_color[ticket.status]} Ticket {ticket.id[:8]} - {ticket.title}"):
+                st.write(f"**Description:** {ticket.description}")
+                st.write(f"**Priority:** {ticket.priority}/5 (AI: {ticket.qualified_priority})")
+                st.write(f"**Status:** {ticket.status}")
+                if ticket.lat and ticket.lon:
+                    st.write(f"**Location:** ({ticket.lat:.6f}, {ticket.lon:.6f})")
     else:
-        st.info("No reports yet")
-
-elif page == "View Reports":
-    st.title("All Reports")
-    
-    if st.session_state.reports:
-        # Filter options
-        col1, col2 = st.columns(2)
-        with col1:
-            category_filter = st.selectbox("Filter by Category", 
-                                         ["All"] + list(KEYWORDS.keys()) + ["other"])
-        with col2:
-            urgency_filter = st.selectbox("Filter by Urgency", 
-                                        ["All", "5-Critical", "4-High", "3-Medium", "2-Low", "1-Minimal"])
-        
-        # Display reports
-        reports_list = list(st.session_state.reports.values())
-        
-        # Apply filters
-        if category_filter != "All":
-            reports_list = [r for r in reports_list if r.category == category_filter]
-        
-        if urgency_filter != "All":
-            urgency_num = int(urgency_filter[0])
-            reports_list = [r for r in reports_list if r.urgency == urgency_num]
-        
-        for report in reports_list:
-            with st.expander(f"Report {report.id} - {report.category.title()} - Urgency {report.urgency}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Description:** {report.description}")
-                    st.write(f"**Category:** {report.category}")
-                    st.write(f"**Urgency:** {report.urgency}/5")
-                with col2:
-                    st.write(f"**Location:** ({report.lat:.6f}, {report.lon:.6f})")
-                    if report.matched_resource_id:
-                        resource = st.session_state.resources.get(report.matched_resource_id)
-                        if resource:
-                            st.success(f"✅ Matched to: {resource.name}")
-                    else:
-                        st.warning("❌ No resource matched")
-    else:
-        st.info("No reports submitted yet")
+        st.info("No tickets yet")
 
 elif page == "Resources":
     st.title("Available Resources")
@@ -609,21 +544,14 @@ elif page == "Submit a Ticket":
             raw_input = st.text_area("Describe the situation", 
                                     placeholder="Freeform description that AI will convert to a structured ticket")
             
-            # Optional report linking
-            report_options = ["None"] + list(st.session_state.reports.keys())
-            linked_report = st.selectbox("Link to Report (optional)", report_options, key="agent_report")
-            
             composed = st.form_submit_button("🤖 Compose Ticket with AI", type="primary")
             
             if composed and raw_input:
-                # Get linked report if selected
-                report = st.session_state.reports.get(linked_report) if linked_report != "None" else None
-                
                 # AI compose with visual feedback
                 with st.spinner('🤖 AI analyzing your request...'):
                     composed_data = ai_compose_ticket(
                         raw_input, 
-                        report, 
+                        None,  # No report linking 
                         enhanced_context=None,
                         include_location=final_lat and final_lon,
                         clicked_lat=final_lat,
@@ -637,21 +565,18 @@ elif page == "Submit a Ticket":
                     # Store the initial data for later use
                     st.session_state['pending_ticket'] = {
                         'raw_input': raw_input,
-                        'report': report,
+                        'report': None,
                         'composed_data': composed_data,
                         'final_lat': final_lat,
                         'final_lon': final_lon,
-                        'linked_report': linked_report,
+                        'linked_report': None,
                         'location_source': location_source
                     }
                     st.rerun()  # Refresh to show questions
                 else:
-                    # Use report location if not provided, otherwise use clicked location
+                    # Use clicked location
                     ticket_lat = final_lat
                     ticket_lon = final_lon
-                    if not final_lat and not final_lon and report:
-                        ticket_lat = report.lat
-                        ticket_lon = report.lon
                     
                     tid = str(uuid.uuid4())
                     ticket = Ticket(
@@ -665,7 +590,7 @@ elif page == "Submit a Ticket":
                         qualified_by=composed_data["qualified_by"],
                         lat=ticket_lat,
                         lon=ticket_lon,
-                        report_id=linked_report if linked_report != "None" else None
+                        report_id=None  # No report linking
                     )
                     
                     st.session_state.tickets[tid] = ticket
@@ -859,32 +784,98 @@ elif page == "Submit a Ticket":
     with tab2:
         st.subheader("Create New Ticket")
         
-        # Location selection outside the form
-        st.write("**📍 Click on the map to set location (optional)**")
-        clicked_lat, clicked_lon, map_data = create_interactive_map(key="ticket_map")
+        # Enhanced location selection with multiple options (same as agent tab)
+        st.write("**📍 Location Selection (optional)**")
         
-        # Show selected coordinates
-        if clicked_lat and clicked_lon:
-            st.success(f"📍 Selected location: ({clicked_lat:.6f}, {clicked_lon:.6f})")
-        else:
-            st.info("Click on the map to select a location for this ticket")
+        # Location method selection
+        location_method = st.radio(
+            "Choose how to specify the location:",
+            ["🗺️ Click on map", "🤖 Describe in text", "📊 Manual coordinates"],
+            horizontal=True,
+            key="manual_location_method"
+        )
         
-        # Add button to clear selection
-        if st.button("🗑️ Clear Location", key="clear_ticket_location"):
-            if "ticket_map_selected_lat" in st.session_state:
-                del st.session_state["ticket_map_selected_lat"]
-            if "ticket_map_selected_lon" in st.session_state:
-                del st.session_state["ticket_map_selected_lon"]
+        manual_final_lat, manual_final_lon, manual_location_source = None, None, "none"
+        
+        if location_method == "🗺️ Click on map":
+            manual_clicked_lat, manual_clicked_lon, manual_map_data = create_interactive_map(key="manual_map")
+            if manual_clicked_lat and manual_clicked_lon:
+                st.success(f"📍 Map location: ({manual_clicked_lat:.6f}, {manual_clicked_lon:.6f})")
+                manual_final_lat, manual_final_lon = manual_clicked_lat, manual_clicked_lon
+                manual_location_source = "map_click"
+            else:
+                st.info("👆 Click on the map to select a location")
+        
+        elif location_method == "🤖 Describe in text":
+            manual_location_text = st.text_input(
+                "Describe the location:",
+                placeholder="e.g., 'CVS at 107th Street and Doral Blvd' or 'Jackson Memorial Hospital ER'",
+                key="manual_location_text"
+            )
+            
+            if manual_location_text:
+                with st.spinner("🔍 Extracting location from description..."):
+                    try:
+                        from location_extractor import extract_coordinates_from_text
+                        extracted_lat, extracted_lon, metadata = extract_coordinates_from_text(manual_location_text)
+                        
+                        if extracted_lat and extracted_lon:
+                            st.success(f"📍 Found location: ({extracted_lat:.6f}, {extracted_lon:.6f})")
+                            st.info(f"**Address:** {metadata['address']}")
+                            st.info(f"**Confidence:** {metadata['confidence']:.1%} via {metadata['method']}")
+                            manual_final_lat, manual_final_lon = extracted_lat, extracted_lon  
+                            manual_location_source = f"nlp_{metadata['method']}"
+                            
+                            # Show extracted location on a small map for confirmation
+                            if st.checkbox("� Show extracted location on map", key="show_manual_extracted_map"):
+                                small_manual_map = create_interactive_map(
+                                    center_lat=extracted_lat, 
+                                    center_lon=extracted_lon, 
+                                    zoom=15, 
+                                    key="manual_extracted_map"
+                                )
+                        else:
+                            st.warning(f"⚠️ Could not find coordinates for: '{manual_location_text}'")
+                            if metadata.get('address'):
+                                st.info(f"Found address: {metadata['address']} but couldn't geocode it")
+                            
+                            # Show suggestions for improvement
+                            if metadata.get('suggestions'):
+                                st.write("💡 **Suggestions to improve location description:**")
+                                for suggestion in metadata['suggestions']:
+                                    st.write(f"  • {suggestion}")
+                    
+                    except ImportError:
+                        st.error("📦 Location extraction requires additional packages. Please install: pip install geopy spacy")
+                    except Exception as e:
+                        st.error(f"❌ Error extracting location: {e}")
+        
+        elif location_method == "📊 Manual coordinates":
+            col1, col2 = st.columns(2)
+            with col1:
+                manual_manual_lat = st.number_input("Latitude:", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", key="manual_manual_lat")
+            with col2:
+                manual_manual_lon = st.number_input("Longitude:", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", key="manual_manual_lon")
+            
+            if manual_manual_lat != 0.0 or manual_manual_lon != 0.0:
+                st.success(f"📍 Manual coordinates: ({manual_manual_lat:.6f}, {manual_manual_lon:.6f})")
+                manual_final_lat, manual_final_lon = manual_manual_lat, manual_manual_lon
+                manual_location_source = "manual_input"
+        
+        # Clear location button
+        if st.button("🗑️ Clear All Locations", key="clear_manual_all_locations"):
+            # Clear all location-related session state for manual tab
+            for key in list(st.session_state.keys()):
+                if key.startswith("manual_") and ("location" in key or "map" in key):
+                    del st.session_state[key]
             st.rerun()
+        
+        st.divider()  # Visual separator
         
         with st.form("ticket_form"):
             title = st.text_input("Title", placeholder="Brief description of the issue")
             description = st.text_area("Description", placeholder="Detailed description")
             priority = st.select_slider("Priority", options=[1, 2, 3, 4, 5], value=3)
-            
-            # Link to existing report
-            report_options = ["None"] + list(st.session_state.reports.keys())
-            linked_report = st.selectbox("Link to Report (optional)", report_options)
             
             submitted = st.form_submit_button("Create Ticket", type="primary")
             
@@ -901,13 +892,30 @@ elif page == "Submit a Ticket":
                     created_at=time.time(),
                     qualified_priority=ai_score,
                     qualified_by=source,
-                    lat=clicked_lat,
-                    lon=clicked_lon,
-                    report_id=linked_report if linked_report != "None" else None
+                    lat=manual_final_lat,
+                    lon=manual_final_lon,
+                    report_id=None  # No report linking
                 )
                 
                 st.session_state.tickets[tid] = ticket
-                st.success(f"✅ Ticket {tid} created! AI suggested priority: {ai_score} ({source})")
+                
+                # Enhanced success message with location info
+                st.success(f"✅ Ticket {tid[:8]} created!")
+                st.info(f"**Title:** {title}")
+                st.info(f"**AI Priority:** {ai_score} (via {source})")
+                
+                # Show location info if available
+                if manual_final_lat and manual_final_lon:
+                    location_method_display = {
+                        "map_click": "🗺️ Map Click",
+                        "nlp_spacy": "🤖 NLP (spaCy)",
+                        "nlp_regex": "🤖 NLP (Pattern)",
+                        "nlp_geocoding": "🤖 NLP (Geocoding)",
+                        "manual_input": "📊 Manual Input",
+                        "none": "📍 No Location"
+                    }
+                    method_display = location_method_display.get(manual_location_source, f"📍 {manual_location_source}")
+                    st.info(f"**Location:** ({manual_final_lat:.6f}, {manual_final_lon:.6f}) via {method_display}")
     
     with tab3:
         st.subheader("All Tickets")
@@ -950,8 +958,8 @@ elif page == "Submit a Ticket":
 elif page == "Map View":
     st.title("🗺️ Interactive Map")
     
-    # Use the interactive map to show all reports and resources
-    st.write("**Interactive map showing all reports (🔴) and resources (🟢)**")
+    # Use the interactive map to show all tickets and resources
+    st.write("**Interactive map showing all tickets (🎫) and resources (🟢)**")
     clicked_lat, clicked_lon, map_data = create_interactive_map(key="view_map")
     
     if clicked_lat and clicked_lon:
@@ -961,12 +969,12 @@ elif page == "Map View":
     st.subheader("Map Legend")
     col1, col2 = st.columns(2)
     with col1:
-        st.write("🔴 **Reports** - Disaster incidents")
-        if st.session_state.reports:
-            for report in st.session_state.reports.values():
-                st.write(f"  • {report.id}: {report.category} (urgency: {report.urgency})")
+        st.write("🎫 **Tickets** - Support requests")
+        if st.session_state.tickets:
+            for ticket in st.session_state.tickets.values():
+                st.write(f"  • {ticket.id[:8]}: {ticket.title} (priority: {ticket.priority})")
         else:
-            st.write("  • No reports yet")
+            st.write("  • No tickets yet")
     with col2:
         st.write("🟢 **Resources** - Available help")
         if st.session_state.resources:
