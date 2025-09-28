@@ -1,5 +1,23 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-httpx==0.25.2
+# Google Application Development Kit - provides CLI tools and utilities for Google Cloud services
+google-adk==0.3.0
+
+# System and process utilities - for monitoring system resources and process management
+psutil==5.9.5
+
+# Web app framework for creating interactive data applications
+streamlit>=1.28.0
+
+# Data validation library using Python type annotations
 pydantic==2.5.0
-python-multipart==0.0.6
+
+# Universal LLM API - unified interface for multiple AI models (OpenAI, Claude, etc.)
+litellm==1.66.3
+
+# Google's Generative AI SDK for Gemini models
+google-generativeai==0.8.5
+
+# Interactive mapping library
+folium>=0.20.0
+
+# Streamlit component for folium maps
+streamlit-folium>=0.25.0

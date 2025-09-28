@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>UnityAid — Tickets</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    :root{--bg:#071028;--card:#0f2130;--muted:#9fb0c3;--accent:#2ac0ff}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#061526 0%,#071028 100%);color:#e6f3fb}
+    .wrap{max-width:1000px;margin:28px auto;padding:20px;display:grid;grid-template-columns:1fr 360px;gap:18px}
+    .card{background:rgba(7,18,30,.6);border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(2,6,23,.6);border:1px solid rgba(255,255,255,.03)}
+    h1{font-size:20px;margin:0 0 10px}
+    .small{color:var(--muted);font-size:13px;margin-bottom:12px}
+    .tickets .item{background:rgba(255,255,255,.02);padding:10px;border-radius:8px;margin-bottom:8px}
+    .row{display:flex;gap:8px}
+    input,textarea,select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(7,18,30,.7);color:#e6f3fb}
+    button{background:linear-gradient(90deg,#0ea5e9,#22d3ee);border:none;color:#032134;font-weight:700;padding:10px 14px;border-radius:10px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div style="max-width:1000px;margin:18px auto;color:#cfe9ff;padding:8px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1 style="margin:0;font-size:28px">Ticketing</h1>
+        <div class="small">Create and track tickets linked to reports</div>
+      </div>
+      <div>
+        <a href="/ui/dashboard" style="color:#9bd8ff">← Back to Dashboard</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="card tickets">
+      <h1>Tickets</h1>
+      <div class="small">All tickets (in-memory)</div>
+      <div id="tickets"></div>
+    </div>
+    <div class="card">
+      <h1>Create Ticket (Agent)</h1>
+      <div class="small">Provide a short description; the agent will compose title and urgency.</div>
+      <form id="TForm">
+        <textarea id="desc" rows="5" placeholder="Describe the situation (e.g., 'Family with children has no water for 2 days')"></textarea>
+        <input id="report" placeholder="Report ID (optional)" />
+        <div class="small" style="margin:6px 0">Pin location on the map (optional):</div>
+        <div id="map" style="height:260px;border-radius:10px;overflow:hidden;margin-bottom:10px"></div>
+        <div class="row">
+          <input id="lat" placeholder="Latitude (auto-filled when you click the map)" />
+          <input id="lon" placeholder="Longitude (auto-filled)" />
+        </div>
+        <div style="margin-top:10px"><button type="submit">Create Ticket</button></div>
+      </form>
+    </div>
+  </div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+const ticketsEl = document.getElementById('tickets');
+const F = document.getElementById('TForm');
+const desc = document.getElementById('desc');
+const report = document.getElementById('report');
+const lat = document.getElementById('lat');
+const lon = document.getElementById('lon');
+const aiBtn = document.getElementById('aiBtn');
+const aiHint = document.getElementById('aiHint');
+
+// Map for pinning the ticket location
+let map, marker;
+try{
+  map = L.map('map').setView([25.77,-80.19], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  map.on('click', (e)=>{
+    const {lat:la, lng:lo} = e.latlng;
+    if(marker) marker.remove();
+    marker = L.marker([la,lo]).addTo(map);
+    lat.value = la.toFixed(6);
+    lon.value = lo.toFixed(6);
+  });
+}catch(e){ console.warn('map init', e); }
+
+async function refresh(){
+  const items = await fetch('/api/tickets').then(r=>r.json());
+  ticketsEl.innerHTML = '';
+  items.slice().reverse().forEach(t=>{
+    const d = document.createElement('div'); d.className='item';
+    const statusColor = t.status==='open'?'#22d3ee': t.status==='in_progress'?'#f59e0b':'#22c55e';
+    d.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:700">${t.title} <small style="color:#9fb0c3">(P${t.priority})</small></div>
+        <div style="color:#9fb0c3;font-size:12px">${t.description||''}</div>
+        ${t.report_id?`<div style="font-size:12px;color:#9fb0c3">Report: ${t.report_id}</div>`:''}
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${statusColor}"></span>
+        <select data-id="${t.id}" class="status">
+          <option value="open" ${t.status==='open'?'selected':''}>open</option>
+          <option value="in_progress" ${t.status==='in_progress'?'selected':''}>in_progress</option>
+          <option value="closed" ${t.status==='closed'?'selected':''}>closed</option>
+        </select>
+      </div>
+    </div>`;
+    ticketsEl.appendChild(d);
+  });
+  document.querySelectorAll('select.status').forEach(sel=>{
+    sel.addEventListener('change', async (e)=>{
+      const id = sel.getAttribute('data-id');
+      const status = sel.value;
+      await fetch(`/api/ticket/${id}?status=${encodeURIComponent(status)}`,{method:'PATCH'});
+      refresh();
+    });
+  });
+}
+
+F.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const payload = {raw_input: desc.value, report_id: report.value||null};
+  if(lat.value && lon.value){ payload.lat = parseFloat(lat.value); payload.lon = parseFloat(lon.value); }
+  const r = await fetch('/api/ticket/agent',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  if(r.ok){ desc.value=''; report.value=''; lat.value=''; lon.value=''; refresh(); }
+});
+
+refresh();
+
+// Prefill from query params if present
+(async function prefillFromQuery(){
+  try{
+    const u = new URL(window.location.href);
+    const repId = u.searchParams.get('report');
+    if(repId){
+      report.value = repId;
+      // Try to hydrate title/desc from the report and center map
+      try{
+        const reps = await fetch('/api/reports').then(r=>r.json());
+        const r = reps.find(x=>x.id===repId);
+        if(r){
+          if(!desc.value) desc.value = `${r.description}`;
+          if(r.lat && r.lon && window.L && map){
+            map.setView([r.lat, r.lon], 14);
+            if(marker) marker.remove();
+            marker = L.marker([r.lat, r.lon]).addTo(map);
+            lat.value = r.lat.toFixed(6);
+            lon.value = r.lon.toFixed(6);
+          }
+        }
+      }catch{}
+    }
+  }catch(e){ console.warn('prefill', e); }
+})();
+</script>
+</body>
+</html>

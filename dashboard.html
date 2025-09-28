@@ -24,8 +24,21 @@
 </head>
 <body>
   <div style="max-width:1200px;margin:18px auto;color:#cfe9ff;padding:8px 20px">
-    <h1 style="margin:0;font-size:28px">Disaster Relief Coordinator</h1>
-    <div class="small">Live coordination dashboard — updates automatically</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1 style="margin:0;font-size:28px">Disaster Relief Coordinator</h1>
+        <div class="small">Live coordination dashboard — updates automatically</div>
+      </div>
+      <div>
+        <a id="ticketingBtn" href="#" target="_blank" style="
+          display:inline-flex;align-items:center;gap:8px;background:linear-gradient(90deg,#0ea5e9,#22d3ee);
+          color:#032134;text-decoration:none;font-weight:700;padding:10px 14px;border-radius:10px;
+          box-shadow:0 6px 18px rgba(14,165,233,.35)">
+          <span>Open Ticketing</span>
+          <span aria-hidden>↗</span>
+        </a>
+      </div>
+    </div>
   </div>
   <div class="wrap">
     <div class="card reports">
@@ -67,6 +80,7 @@
 const reportsEl = document.getElementById('reports');
 const matchesEl = document.getElementById('matches');
 const countEls = {food:document.getElementById('c-food'),water:document.getElementById('c-water'),medical:document.getElementById('c-medical'),shelter:document.getElementById('c-shelter'),other:document.getElementById('c-other')};
+const ticketingBtn = document.getElementById('ticketingBtn');
 
 // Map
 const map = L.map('map').setView([25.77,-80.19], 12);
@@ -80,8 +94,13 @@ function makeReportItem(r){
   const emoji = kind==='medical'?'⚕️': kind==='water'?'💧': kind==='food'?'🍽️': kind==='shelter'?'🏠':'📍';
   icon.textContent = emoji;
   const meta = document.createElement('div'); meta.className='meta';
+  const link = document.createElement('a');
+  link.textContent = 'Create Ticket';
+  link.style = 'margin-left:8px;color:#9bd8ff;text-decoration:underline;cursor:pointer;font-size:12px';
+  link.href = `/ui/tickets?report=${encodeURIComponent(r.id)}`;
   meta.innerHTML = `<div style="font-weight:600">${r.description}</div><div style="color:#9fb0c3;font-size:12px">${r.lat.toFixed(3)}, ${r.lon.toFixed(3)} • urgency ${r.urgency}</div>`;
   d.appendChild(icon); d.appendChild(meta);
+  meta.appendChild(link);
   return d;
 }
 
@@ -130,6 +149,25 @@ async function refresh(){
 
 // Initial load
 refresh();
+
+// Configure Ticketing button
+(async function setupTicketing(){
+  try{
+    const u = new URL(window.location.href);
+    // priority: query param > /api/config > default
+    let tUrl = u.searchParams.get('ticket') || '';
+    if(!tUrl){
+      try{
+        const cfg = await fetch('/api/config').then(r=>r.json());
+        tUrl = cfg.ticketing_url || '';
+      }catch{}
+    }
+    if(!tUrl) tUrl = '/ui/tickets'; // default to built-in tickets UI
+
+    ticketingBtn.href = tUrl;
+    ticketingBtn.title = tUrl;
+  }catch(e){ console.warn('ticketing setup', e); }
+})();
 
 // Use Server-Sent Events for live updates (fallback: polling still available)
 if (!!window.EventSource) {
