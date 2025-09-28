@@ -52,12 +52,26 @@ venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-4. **Run the application**:
+4. **Configure environment (optional but recommended)**:
+```powershell
+# Copy the example environment file
+copy .env.example .env
+
+# Edit .env with your preferred text editor
+notepad .env
+```
+
+**Important**: Add your Google AI API key to `.env` for enhanced features:
+```env
+GOOGLE_API_KEY=your_google_api_key_here
+```
+
+5. **Run the application**:
 ```powershell
 streamlit run app_streamlit.py
 ```
 
-5. **Access the application**:
+6. **Access the application**:
    - Open your browser to: http://localhost:8501
    - Start submitting tickets and managing disaster response!
 
@@ -216,6 +230,51 @@ Vulnerable Population Detected:
 - **Vulnerable populations**: +1 priority boost
 - **Stability indicators**: -1 priority reduction
 - **Resource availability**: Context-dependent adjustment
+
+## ⚙️ Environment Configuration
+
+UnityAid supports various configuration options through environment variables. Copy `.env.example` to `.env` and customize as needed:
+
+### 🔑 **Essential Settings**
+```env
+# Google AI API Key (strongly recommended)
+GOOGLE_API_KEY=your_google_api_key_here
+GOOGLE_MODEL=gemini-1.5-flash
+
+# Conversational AI Settings
+PRIORITIZER_CONFIDENCE_THRESHOLD=0.7  # Lower = more questions
+MAX_QUESTIONS_PER_SESSION=4
+```
+
+### 📊 **Feature Toggles**
+```env
+# Enable/disable major features
+ENABLE_CONVERSATIONAL_AI=true
+ENABLE_ENHANCED_TITLES=true
+ENABLE_INTERACTIVE_MAPS=true
+ENABLE_ANALYTICS=true
+```
+
+### 🔧 **Application Settings**
+```env
+# Environment and debugging
+APP_ENV=development
+DEBUG=false
+LOG_LEVEL=INFO
+
+# Server configuration
+STREAMLIT_SERVER_PORT=8501
+STREAMLIT_SERVER_ADDRESS=localhost
+```
+
+### 🚨 **Getting Your Google AI API Key**
+1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Sign in with your Google account
+3. Create a new API key
+4. Copy the key to your `.env` file
+5. Restart the application
+
+**Note**: The app works without an API key using fallback heuristics, but Google AI provides significantly better title generation and classification accuracy.
 
 ## 🔍 Troubleshooting
 

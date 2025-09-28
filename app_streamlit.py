@@ -282,10 +282,17 @@ def ai_qualify_urgency(text: str, use_conversation: bool = True) -> dict:
         'clarifying_questions': []
     }
 
-def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
+def ai_compose_ticket(raw_input: str, report: Optional[Report] = None, enhanced_context: str = None, 
+                     include_location: bool = False, clicked_lat: Optional[float] = None, 
+                     clicked_lon: Optional[float] = None, enable_enhanced_context: bool = False, 
+                     location_source: str = "none") -> dict:
     """Compose a ticket dict with title, description, priority."""
     text = (raw_input or "").strip()
-    lower = text.lower()
+    
+    # Use enhanced context for title generation if available (from Q&A)
+    title_context = enhanced_context if enhanced_context else text
+    lower = title_context.lower()
+    
     title = "Assistance needed"
     
     # Try Google Generative AI for title
@@ -298,7 +305,7 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
             model = genai.GenerativeModel(model_name)
             prompt = (
                 "Create a concise, action-oriented title (max 6 words) for a disaster response ticket.\n"
-                "Only return the title, no punctuation beyond what's necessary.\n\nText: " + (raw_input or "")
+                "Focus on the most critical aspect. Only return the title, no punctuation beyond what's necessary.\n\nText: " + title_context
             )
             resp = model.generate_content(prompt)
             gen_title = resp.text.strip() if hasattr(resp, 'text') else None
@@ -310,15 +317,43 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
     except Exception:
         source = "heuristic"
     
+    # Enhanced heuristic title generation
     if source == "heuristic":
-        if any(w in lower for w in ["water", "dehydration", "thirst"]):
+        # Priority-based title generation using enhanced context
+        if any(w in lower for w in ["unconscious", "not breathing", "cardiac", "heart attack", "severe bleeding"]):
+            title = "CRITICAL: Life-threatening emergency"
+        elif any(w in lower for w in ["trapped", "buried", "collapsed", "building collapse"]):
+            title = "URGENT: Rescue operation needed"
+        elif any(w in lower for w in ["child missing", "person missing", "abducted", "lost child"]):
+            title = "CRITICAL: Missing person"
+        elif any(w in lower for w in ["fire", "explosion", "gas leak", "chemical spill"]):
+            title = "CRITICAL: Hazmat emergency"
+        elif any(w in lower for w in ["multiple people", "several people", "many people", "group"]):
+            title = "HIGH: Multiple victims"
+        elif any(w in lower for w in ["child", "baby", "pregnant", "elderly"]) and any(w in lower for w in ["danger", "help", "emergency"]):
+            title = "HIGH: Vulnerable person in danger"
+        elif any(w in lower for w in ["injury", "broken", "diabetic", "insulin", "asthma", "chest pain"]):
+            title = "URGENT: Medical emergency"
+        elif any(w in lower for w in ["water", "dehydration", "thirst", "no water"]):
             title = "Water assistance needed"
-        elif any(w in lower for w in ["food", "hunger", "meals", "supplies"]):
+        elif any(w in lower for w in ["food", "hunger", "meals", "supplies", "starving"]):
             title = "Food assistance needed"
-        elif any(w in lower for w in ["injury", "medical", "insulin", "asthma", "medicine", "hospital"]):
-            title = "Medical assistance required"
         elif any(w in lower for w in ["shelter", "housing", "evacuate", "evacuation", "homeless"]):
             title = "Shelter assistance needed"
+        elif any(w in lower for w in ["power", "electricity", "communication", "phone"]):
+            title = "Utilities assistance needed"
+        elif any(w in lower for w in ["getting worse", "deteriorating", "unstable"]):
+            title = "URGENT: Deteriorating situation"
+        else:
+            # Fallback to generic but try to be more specific
+            if "medical" in lower or "health" in lower:
+                title = "Medical assistance needed"
+            elif "help" in lower and "immediate" in lower:
+                title = "URGENT: Immediate help needed"
+            elif "emergency" in lower:
+                title = "Emergency assistance needed"
+            else:
+                title = "Assistance needed"
     
     urgency_result = ai_qualify_urgency(text)
     desc = text
@@ -482,23 +517,93 @@ elif page == "Submit a Ticket":
     with tab1:
         st.subheader("AI Agent Ticket Composer")
         
-        # Location selection outside the form
-        st.write("**📍 Click on the map to set location (optional)**")
-        agent_clicked_lat, agent_clicked_lon, agent_map_data = create_interactive_map(key="agent_map")
+        # Enhanced location selection with multiple options
+        st.write("**📍 Location Selection (optional)**")
         
-        # Show selected coordinates
-        if agent_clicked_lat and agent_clicked_lon:
-            st.success(f"📍 Selected location: ({agent_clicked_lat:.6f}, {agent_clicked_lon:.6f})")
-        else:
-            st.info("Click on the map to select a location for this ticket")
+        # Location method selection
+        location_method = st.radio(
+            "Choose how to specify the location:",
+            ["🗺️ Click on map", "🤖 Describe in text", "📊 Manual coordinates"],
+            horizontal=True,
+            key="agent_location_method"
+        )
         
-        # Add button to clear selection
-        if st.button("🗑️ Clear Location", key="clear_agent_location"):
-            if "agent_map_selected_lat" in st.session_state:
-                del st.session_state["agent_map_selected_lat"]
-            if "agent_map_selected_lon" in st.session_state:
-                del st.session_state["agent_map_selected_lon"]
+        final_lat, final_lon, location_source = None, None, "none"
+        
+        if location_method == "🗺️ Click on map":
+            agent_clicked_lat, agent_clicked_lon, agent_map_data = create_interactive_map(key="agent_map")
+            if agent_clicked_lat and agent_clicked_lon:
+                st.success(f"📍 Map location: ({agent_clicked_lat:.6f}, {agent_clicked_lon:.6f})")
+                final_lat, final_lon = agent_clicked_lat, agent_clicked_lon
+                location_source = "map_click"
+            else:
+                st.info("👆 Click on the map to select a location")
+        
+        elif location_method == "🤖 Describe in text":
+            location_text = st.text_input(
+                "Describe the location:",
+                placeholder="e.g., 'CVS at 107th Street and Doral Blvd' or 'Jackson Memorial Hospital ER'",
+                key="agent_location_text"
+            )
+            
+            if location_text:
+                with st.spinner("🔍 Extracting location from description..."):
+                    try:
+                        from location_extractor import extract_coordinates_from_text
+                        extracted_lat, extracted_lon, metadata = extract_coordinates_from_text(location_text)
+                        
+                        if extracted_lat and extracted_lon:
+                            st.success(f"📍 Found location: ({extracted_lat:.6f}, {extracted_lon:.6f})")
+                            st.info(f"**Address:** {metadata['address']}")
+                            st.info(f"**Confidence:** {metadata['confidence']:.1%} via {metadata['method']}")
+                            final_lat, final_lon = extracted_lat, extracted_lon  
+                            location_source = f"nlp_{metadata['method']}"
+                            
+                            # Show extracted location on a small map for confirmation
+                            if st.checkbox("📍 Show extracted location on map", key="show_extracted_map"):
+                                small_map = create_interactive_map(
+                                    center_lat=extracted_lat, 
+                                    center_lon=extracted_lon, 
+                                    zoom=15, 
+                                    key="extracted_map"
+                                )
+                        else:
+                            st.warning(f"⚠️ Could not find coordinates for: '{location_text}'")
+                            if metadata.get('address'):
+                                st.info(f"Found address: {metadata['address']} but couldn't geocode it")
+                            
+                            # Show suggestions for improvement
+                            if metadata.get('suggestions'):
+                                st.write("💡 **Suggestions to improve location description:**")
+                                for suggestion in metadata['suggestions']:
+                                    st.write(f"  • {suggestion}")
+                    
+                    except ImportError:
+                        st.error("📦 Location extraction requires additional packages. Please install: pip install geopy spacy")
+                    except Exception as e:
+                        st.error(f"❌ Error extracting location: {e}")
+        
+        elif location_method == "📊 Manual coordinates":
+            col1, col2 = st.columns(2)
+            with col1:
+                manual_lat = st.number_input("Latitude:", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", key="agent_manual_lat")
+            with col2:
+                manual_lon = st.number_input("Longitude:", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", key="agent_manual_lon")
+            
+            if manual_lat != 0.0 or manual_lon != 0.0:
+                st.success(f"📍 Manual coordinates: ({manual_lat:.6f}, {manual_lon:.6f})")
+                final_lat, final_lon = manual_lat, manual_lon
+                location_source = "manual_input"
+        
+        # Clear location button
+        if st.button("🗑️ Clear All Locations", key="clear_agent_all_locations"):
+            # Clear all location-related session state
+            for key in list(st.session_state.keys()):
+                if key.startswith("agent_") and ("location" in key or "map" in key):
+                    del st.session_state[key]
             st.rerun()
+        
+        st.divider()  # Visual separator
         
         with st.form("agent_compose"):
             raw_input = st.text_area("Describe the situation", 
@@ -514,8 +619,18 @@ elif page == "Submit a Ticket":
                 # Get linked report if selected
                 report = st.session_state.reports.get(linked_report) if linked_report != "None" else None
                 
-                # AI compose
-                composed_data = ai_compose_ticket(raw_input, report)
+                # AI compose with visual feedback
+                with st.spinner('🤖 AI analyzing your request...'):
+                    composed_data = ai_compose_ticket(
+                        raw_input, 
+                        report, 
+                        enhanced_context=None,
+                        include_location=final_lat and final_lon,
+                        clicked_lat=final_lat,
+                        clicked_lon=final_lon,
+                        enable_enhanced_context=True,
+                        location_source=location_source
+                    )
                 
                 # Check if we need clarification
                 if composed_data.get('needs_clarification', False) and composed_data.get('clarifying_questions'):
@@ -524,18 +639,19 @@ elif page == "Submit a Ticket":
                         'raw_input': raw_input,
                         'report': report,
                         'composed_data': composed_data,
-                        'final_lat': agent_clicked_lat,
-                        'final_lon': agent_clicked_lon,
-                        'linked_report': linked_report
+                        'final_lat': final_lat,
+                        'final_lon': final_lon,
+                        'linked_report': linked_report,
+                        'location_source': location_source
                     }
                     st.rerun()  # Refresh to show questions
                 else:
                     # Use report location if not provided, otherwise use clicked location
-                    final_lat = agent_clicked_lat
-                    final_lon = agent_clicked_lon
-                    if not agent_clicked_lat and not agent_clicked_lon and report:
-                        final_lat = report.lat
-                        final_lon = report.lon
+                    ticket_lat = final_lat
+                    ticket_lon = final_lon
+                    if not final_lat and not final_lon and report:
+                        ticket_lat = report.lat
+                        ticket_lon = report.lon
                     
                     tid = str(uuid.uuid4())
                     ticket = Ticket(
@@ -547,8 +663,8 @@ elif page == "Submit a Ticket":
                         created_at=time.time(),
                         qualified_priority=composed_data["qualified_priority"],
                         qualified_by=composed_data["qualified_by"],
-                        lat=final_lat,
-                        lon=final_lon,
+                        lat=ticket_lat,
+                        lon=ticket_lon,
                         report_id=linked_report if linked_report != "None" else None
                     )
                     
@@ -557,7 +673,36 @@ elif page == "Submit a Ticket":
                     st.success(f"🤖 AI-composed ticket created: {tid}")
                     st.info(f"**Generated Title:** {composed_data['title']}")
                     st.info(f"**AI Priority:** {composed_data['qualified_priority']} (via {composed_data['qualified_by']})")
+                    
+                    # Show location info if available
+                    if ticket_lat and ticket_lon:
+                        location_method_display = {
+                            "map_click": "🗺️ Map Click",
+                            "nlp_spacy": "🤖 NLP (spaCy)",
+                            "nlp_regex": "🤖 NLP (Pattern)",
+                            "nlp_geocoding": "🤖 NLP (Geocoding)",
+                            "manual_input": "📊 Manual Input",
+                            "none": "📍 Report Location"
+                        }
+                        method_display = location_method_display.get(location_source, f"📍 {location_source}")
+                        st.info(f"**Location:** ({ticket_lat:.6f}, {ticket_lon:.6f}) via {method_display}")
+                    
                     confidence = composed_data.get('confidence', 0)
+                    
+                    # Visual feedback for standard generation
+                    with st.container():
+                        st.markdown("---")
+                        st.markdown("### 🎯 **Standard AI Processing**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**📝 Title Generation:**")
+                            st.markdown(f"- Method: {composed_data.get('qualified_by', 'heuristic')}")
+                            st.markdown(f"- Result: `{composed_data['title']}`")
+                        with col2:
+                            st.markdown("**⚡ Priority Analysis:**")
+                            st.markdown(f"- Confidence: {confidence:.1%}")
+                            st.markdown(f"- Priority: {composed_data['qualified_priority']}/5")
+                    
                     if confidence < 0.7:
                         st.warning(f"⚠️ AI confidence was low ({confidence:.2f}). Consider reviewing the priority.")
         
@@ -584,31 +729,47 @@ elif page == "Submit a Ticket":
             with col1:
                 if st.button("✅ Submit Answers", type="primary"):
                     if qa_pairs:
-                        # Reclassify with the Q&A
-                        try:
-                            import sys
-                            from pathlib import Path
-                            prioritizer_path = Path(__file__).parent / "PrioritizerAgent"
-                            sys.path.append(str(prioritizer_path))
+                        with st.spinner('🔄 Processing enhanced context with AI...'):
+                            # Reclassify with the Q&A
+                            try:
+                                import sys
+                                from pathlib import Path
+                                prioritizer_path = Path(__file__).parent / "PrioritizerAgent"
+                                sys.path.append(str(prioritizer_path))
+                                
+                                from prioritizer_integration import answer_questions_and_reclassify
+                                
+                                updated_result = answer_questions_and_reclassify(
+                                    pending['raw_input'], 
+                                    qa_pairs, 
+                                    composed_data.get('conversation_id')
+                                )
+                                
+                                # Update composed data with new priority
+                                composed_data.update({
+                                    'priority': updated_result['priority'],
+                                    'qualified_priority': updated_result['priority'],
+                                    'qualified_by': updated_result['source'],
+                                    'confidence': updated_result['confidence']
+                                })
+                                
+                            except Exception as e:
+                                st.error(f"Error reclassifying: {e}")
                             
-                            from prioritizer_integration import answer_questions_and_reclassify
+                            # Build enhanced context for title generation
+                            enhanced_context = pending['raw_input'] + "\n\nAdditional Information:\n"
+                            for q, a in qa_pairs:
+                                enhanced_context += f"Q: {q}\nA: {a}\n"
                             
-                            updated_result = answer_questions_and_reclassify(
+                            # Regenerate title with enhanced context
+                            enhanced_ticket_data = ai_compose_ticket(
                                 pending['raw_input'], 
-                                qa_pairs, 
-                                composed_data.get('conversation_id')
+                                pending['report'], 
+                                enhanced_context=enhanced_context
                             )
                             
-                            # Update composed data with new priority
-                            composed_data.update({
-                                'priority': updated_result['priority'],
-                                'qualified_priority': updated_result['priority'],
-                                'qualified_by': updated_result['source'],
-                                'confidence': updated_result['confidence']
-                            })
-                            
-                        except Exception as e:
-                            st.error(f"Error reclassifying: {e}")
+                            # Use the enhanced title but keep the updated priority from Q&A
+                            final_title = enhanced_ticket_data["title"]
                         
                         # Use report location if not provided, otherwise use clicked location
                         final_lat = pending['final_lat']
@@ -620,7 +781,7 @@ elif page == "Submit a Ticket":
                         tid = str(uuid.uuid4())
                         ticket = Ticket(
                             id=tid,
-                            title=composed_data["title"],
+                            title=final_title,  # Use the enhanced title
                             description=composed_data["description"] + f"\n\nAdditional Q&A:\n" + 
                                       "\n".join([f"Q: {q}\nA: {a}" for q, a in qa_pairs]),
                             status="open",
@@ -637,8 +798,24 @@ elif page == "Submit a Ticket":
                         del st.session_state['pending_ticket']  # Clear pending state
                         
                         st.success(f"🤖 AI-composed ticket created: {tid}")
+                        st.info(f"**Enhanced Title:** {final_title}")
                         st.info(f"**Updated Priority:** {composed_data['qualified_priority']} (via {composed_data['qualified_by']})")
                         st.info(f"**Final Confidence:** {composed_data.get('confidence', 0):.1%}")
+                        
+                        # Visual indicator for enhanced generation
+                        with st.container():
+                            st.markdown("---")
+                            st.markdown("### 🔄 **Enhanced AI Processing Applied**")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown("**✨ Title Generation:**")
+                                st.markdown(f"- Used Q&A context for smarter titles")
+                                st.markdown(f"- Generated: `{final_title}`")
+                            with col2:
+                                st.markdown("**🎯 Priority Analysis:**") 
+                                st.markdown(f"- Q&A Boost: +{composed_data.get('qa_boost', 0)} levels")
+                                st.markdown(f"- Final Priority: {composed_data['qualified_priority']}/5")
+                        
                         st.rerun()
                     else:
                         st.error("Please answer at least one question before submitting.")

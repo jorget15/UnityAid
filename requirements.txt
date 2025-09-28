@@ -21,3 +21,9 @@ folium>=0.20.0
 
 # Streamlit component for folium maps
 streamlit-folium>=0.25.0
+
+# Geocoding and location services
+geopy>=2.4.0
+
+# Natural language processing for location extraction
+spacy>=3.7.0
