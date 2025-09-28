@@ -1,16 +1,30 @@
 # app.py — UnityAid MVP (single file)
 import asyncio, uuid, math, json
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Optional, Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    seed_resources()
+    task = asyncio.create_task(loop_agent())
+    yield
+    # Shutdown
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
 # ---------- FastAPI app (single instance!) ----------
-app = FastAPI(title="UnityAid", version="0.1.0")
+app = FastAPI(title="UnityAid", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_headers=["*"], allow_methods=["*"])
 app.mount("/static", StaticFiles(directory=".", html=True), name="static")  # serve static files under /static
 
@@ -232,10 +246,10 @@ def a2a_subscribe():
   return StreamingResponse(gen(), media_type='text/event-stream')
 
 # ---------- API routes ----------
-@app.on_event("startup")
-async def _startup():
-    seed_resources()
-    asyncio.create_task(loop_agent())
+@app.get("/")
+def root():
+  """Redirect root to the UI dashboard."""
+  return RedirectResponse(url="/ui/dashboard")
 
 @app.get("/health")
 @app.get("/api/health")
