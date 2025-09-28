@@ -183,8 +183,38 @@ def create_interactive_map(center_lat=25.77, center_lon=-80.19, zoom=10, key="ma
     for r in resources_data:
         st.session_state.resources[r.id] = r
 
-def ai_qualify_urgency(text: str) -> tuple[int, str]:
-    """Return (priority, source). 1=low .. 5=critical."""
+def ai_qualify_urgency(text: str, use_conversation: bool = True) -> dict:
+    """Return priority classification result with potential follow-up questions."""
+    
+    # Try to use the PrioritizerAgent first with conversation support
+    try:
+        import sys
+        from pathlib import Path
+        prioritizer_path = Path(__file__).parent / "PrioritizerAgent"
+        sys.path.append(str(prioritizer_path))
+        
+        if use_conversation:
+            from prioritizer_integration import classify_with_conversation
+            result = classify_with_conversation(text)
+        else:
+            from prioritizer_integration import classify_ticket_priority
+            result = classify_ticket_priority(text)
+            
+        return {
+            'priority': result['priority'],
+            'source': f"PrioritizerAgent ({result['confidence']:.2f})",
+            'confidence': result['confidence'],
+            'needs_clarification': result.get('needs_clarification', False),
+            'clarifying_questions': result.get('clarifying_questions', []),
+            'conversation_id': result.get('conversation_id')
+        }
+        
+    except Exception as e:
+        # Fallback to original heuristic if PrioritizerAgent fails
+        print(f"PrioritizerAgent not available, using fallback: {e}")
+        pass
+    
+    # Original heuristic fallback
     t = (text or "").lower()
     score = 3
     
@@ -234,11 +264,23 @@ def ai_qualify_urgency(text: str) -> tuple[int, str]:
             content = resp.text.strip() if hasattr(resp, 'text') else str(resp).strip()
             parsed = int(''.join(ch for ch in content if ch.isdigit())[:1] or '3')
             parsed = max(1, min(5, parsed))
-            return parsed, f"google:{model_name}"
+            return {
+                'priority': parsed, 
+                'source': f"google:{model_name}",
+                'confidence': 0.75,
+                'needs_clarification': False,
+                'clarifying_questions': []
+            }
     except Exception:
         pass
     
-    return score, "heuristic"
+    return {
+        'priority': score, 
+        'source': "heuristic",
+        'confidence': 0.65,
+        'needs_clarification': False,
+        'clarifying_questions': []
+    }
 
 def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
     """Compose a ticket dict with title, description, priority."""
@@ -278,7 +320,7 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
         elif any(w in lower for w in ["shelter", "housing", "evacuate", "evacuation", "homeless"]):
             title = "Shelter assistance needed"
     
-    priority, src = ai_qualify_urgency(text)
+    urgency_result = ai_qualify_urgency(text)
     desc = text
     if report and report.description and (len(text) < 10 or report.description not in text):
         desc = f"{text}\nLinked report: {report.id} — {report.description}"
@@ -286,9 +328,13 @@ def ai_compose_ticket(raw_input: str, report: Optional[Report] = None) -> dict:
     return {
         "title": title,
         "description": desc,
-        "priority": priority,
-        "qualified_priority": priority,
-        "qualified_by": src
+        "priority": urgency_result['priority'],
+        "qualified_priority": urgency_result['priority'],
+        "qualified_by": urgency_result['source'],
+        "confidence": urgency_result['confidence'],
+        "needs_clarification": urgency_result['needs_clarification'],
+        "clarifying_questions": urgency_result['clarifying_questions'],
+        "conversation_id": urgency_result.get('conversation_id')
     }
 
 def process_queue():
@@ -471,33 +517,167 @@ elif page == "Submit a Ticket":
                 # AI compose
                 composed_data = ai_compose_ticket(raw_input, report)
                 
-                # Use report location if not provided, otherwise use clicked location
-                final_lat = agent_clicked_lat
-                final_lon = agent_clicked_lon
-                if not agent_clicked_lat and not agent_clicked_lon and report:
-                    final_lat = report.lat
-                    final_lon = report.lon
-                
-                tid = str(uuid.uuid4())
-                ticket = Ticket(
-                    id=tid,
-                    title=composed_data["title"],
-                    description=composed_data["description"],
-                    status="open",
-                    priority=composed_data["priority"],
-                    created_at=time.time(),
-                    qualified_priority=composed_data["qualified_priority"],
-                    qualified_by=composed_data["qualified_by"],
-                    lat=final_lat,
-                    lon=final_lon,
-                    report_id=linked_report if linked_report != "None" else None
-                )
-                
-                st.session_state.tickets[tid] = ticket
-                
-                st.success(f"🤖 AI-composed ticket created: {tid}")
-                st.info(f"**Generated Title:** {composed_data['title']}")
-                st.info(f"**AI Priority:** {composed_data['qualified_priority']} (via {composed_data['qualified_by']})")
+                # Check if we need clarification
+                if composed_data.get('needs_clarification', False) and composed_data.get('clarifying_questions'):
+                    # Store the initial data for later use
+                    st.session_state['pending_ticket'] = {
+                        'raw_input': raw_input,
+                        'report': report,
+                        'composed_data': composed_data,
+                        'final_lat': agent_clicked_lat,
+                        'final_lon': agent_clicked_lon,
+                        'linked_report': linked_report
+                    }
+                    st.rerun()  # Refresh to show questions
+                else:
+                    # Use report location if not provided, otherwise use clicked location
+                    final_lat = agent_clicked_lat
+                    final_lon = agent_clicked_lon
+                    if not agent_clicked_lat and not agent_clicked_lon and report:
+                        final_lat = report.lat
+                        final_lon = report.lon
+                    
+                    tid = str(uuid.uuid4())
+                    ticket = Ticket(
+                        id=tid,
+                        title=composed_data["title"],
+                        description=composed_data["description"],
+                        status="open",
+                        priority=composed_data["priority"],
+                        created_at=time.time(),
+                        qualified_priority=composed_data["qualified_priority"],
+                        qualified_by=composed_data["qualified_by"],
+                        lat=final_lat,
+                        lon=final_lon,
+                        report_id=linked_report if linked_report != "None" else None
+                    )
+                    
+                    st.session_state.tickets[tid] = ticket
+                    
+                    st.success(f"🤖 AI-composed ticket created: {tid}")
+                    st.info(f"**Generated Title:** {composed_data['title']}")
+                    st.info(f"**AI Priority:** {composed_data['qualified_priority']} (via {composed_data['qualified_by']})")
+                    confidence = composed_data.get('confidence', 0)
+                    if confidence < 0.7:
+                        st.warning(f"⚠️ AI confidence was low ({confidence:.2f}). Consider reviewing the priority.")
+        
+        # Handle follow-up questions if needed
+        if 'pending_ticket' in st.session_state:
+            st.divider()
+            st.subheader("🤔 AI needs more information")
+            
+            pending = st.session_state['pending_ticket']
+            composed_data = pending['composed_data']
+            
+            st.info(f"**Current AI assessment:** Priority {composed_data['priority']} with {composed_data['confidence']:.1%} confidence")
+            st.info("Please answer the following questions to help improve the priority classification:")
+            
+            # Display questions and collect answers
+            qa_pairs = []
+            for i, question in enumerate(composed_data['clarifying_questions']):
+                answer = st.text_input(f"Q{i+1}: {question}", key=f"qa_{i}")
+                if answer.strip():
+                    qa_pairs.append((question, answer.strip()))
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("✅ Submit Answers", type="primary"):
+                    if qa_pairs:
+                        # Reclassify with the Q&A
+                        try:
+                            import sys
+                            from pathlib import Path
+                            prioritizer_path = Path(__file__).parent / "PrioritizerAgent"
+                            sys.path.append(str(prioritizer_path))
+                            
+                            from prioritizer_integration import answer_questions_and_reclassify
+                            
+                            updated_result = answer_questions_and_reclassify(
+                                pending['raw_input'], 
+                                qa_pairs, 
+                                composed_data.get('conversation_id')
+                            )
+                            
+                            # Update composed data with new priority
+                            composed_data.update({
+                                'priority': updated_result['priority'],
+                                'qualified_priority': updated_result['priority'],
+                                'qualified_by': updated_result['source'],
+                                'confidence': updated_result['confidence']
+                            })
+                            
+                        except Exception as e:
+                            st.error(f"Error reclassifying: {e}")
+                        
+                        # Use report location if not provided, otherwise use clicked location
+                        final_lat = pending['final_lat']
+                        final_lon = pending['final_lon']
+                        if not final_lat and not final_lon and pending['report']:
+                            final_lat = pending['report'].lat
+                            final_lon = pending['report'].lon
+                        
+                        tid = str(uuid.uuid4())
+                        ticket = Ticket(
+                            id=tid,
+                            title=composed_data["title"],
+                            description=composed_data["description"] + f"\n\nAdditional Q&A:\n" + 
+                                      "\n".join([f"Q: {q}\nA: {a}" for q, a in qa_pairs]),
+                            status="open",
+                            priority=composed_data["priority"],
+                            created_at=time.time(),
+                            qualified_priority=composed_data["qualified_priority"],
+                            qualified_by=composed_data["qualified_by"],
+                            lat=final_lat,
+                            lon=final_lon,
+                            report_id=pending['linked_report'] if pending['linked_report'] != "None" else None
+                        )
+                        
+                        st.session_state.tickets[tid] = ticket
+                        del st.session_state['pending_ticket']  # Clear pending state
+                        
+                        st.success(f"🤖 AI-composed ticket created: {tid}")
+                        st.info(f"**Updated Priority:** {composed_data['qualified_priority']} (via {composed_data['qualified_by']})")
+                        st.info(f"**Final Confidence:** {composed_data.get('confidence', 0):.1%}")
+                        st.rerun()
+                    else:
+                        st.error("Please answer at least one question before submitting.")
+            
+            with col2:
+                if st.button("⏭️ Skip Questions (Use Current Priority)"):
+                    # Create ticket with original priority
+                    final_lat = pending['final_lat']
+                    final_lon = pending['final_lon']
+                    if not final_lat and not final_lon and pending['report']:
+                        final_lat = pending['report'].lat
+                        final_lon = pending['report'].lon
+                    
+                    tid = str(uuid.uuid4())
+                    ticket = Ticket(
+                        id=tid,
+                        title=composed_data["title"],
+                        description=composed_data["description"],
+                        status="open",
+                        priority=composed_data["priority"],
+                        created_at=time.time(),
+                        qualified_priority=composed_data["qualified_priority"],
+                        qualified_by=composed_data["qualified_by"],
+                        lat=final_lat,
+                        lon=final_lon,
+                        report_id=pending['linked_report'] if pending['linked_report'] != "None" else None
+                    )
+                    
+                    st.session_state.tickets[tid] = ticket
+                    del st.session_state['pending_ticket']
+                    
+                    st.success(f"🤖 AI-composed ticket created: {tid}")
+                    st.warning(f"⚠️ Used original priority {composed_data['priority']} with {composed_data.get('confidence', 0):.1%} confidence")
+                    st.rerun()
+            
+            with col3:
+                if st.button("❌ Cancel"):
+                    del st.session_state['pending_ticket']
+                    st.rerun()
     
     with tab2:
         st.subheader("Create New Ticket")
