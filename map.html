@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>UnityAid — Live Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style> body,html{margin:0;height:100%} #map{height:100%} </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([25.77,-80.19], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+let layer;
+async function refresh(){
+  const gj = await fetch('http://127.0.0.1:8000/map.geojson').then(r=>r.json());
+  if(layer) map.removeLayer(layer);
+  layer = L.geoJSON(gj, {
+    pointToLayer: (f, latlng) => {
+      const isReport = f.properties.kind === "report";
+      const cat = f.properties.category;
+      const color = isReport
+        ? (cat==="medical"?"#ef4444":cat==="water"?"#38bdf8":cat==="food"?"#f59e0b":cat==="shelter"?"#22c55e":"#eab308")
+        : "#10b981";
+      return L.circleMarker(latlng, {radius:8, color, weight:2, fillOpacity:0.6});
+    },
+    onEachFeature: (f, l) => {
+      const p=f.properties;
+      l.bindPopup(`<b>${p.kind.toUpperCase()}</b><br/>Category: ${p.category ?? "-"}<br/>Urgency: ${p.urgency ?? "-"}<br/>Match: ${p.matched_resource ?? "-"}<br/><small>${p.name??""}</small>`);
+    }
+  }).addTo(map);
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

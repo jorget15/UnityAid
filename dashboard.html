@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>UnityAid — Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    :root{--bg:#071028;--card:#0f2130;--muted:#9fb0c3;--accent:#2ac0ff}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#061526 0%,#071028 100%);color:#e6f3fb}
+    .wrap{max-width:1200px;margin:28px auto;padding:20px;display:grid;grid-template-columns:280px 300px 1fr;gap:18px}
+    .card{background:rgba(7,18,30,.6);border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(2,6,23,.6);border:1px solid rgba(255,255,255,.03)}
+    h1{font-size:20px;margin:0 0 10px}
+    .small{color:var(--muted);font-size:13px;margin-bottom:12px}
+    #map{height:640px;border-radius:10px;overflow:hidden}
+    .reports .item{background:rgba(255,255,255,.02);padding:10px;border-radius:8px;margin-bottom:8px;display:flex;gap:10px;align-items:center}
+    .icon{width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.03);display:flex;align-items:center;justify-content:center;font-size:18px}
+    .meta{font-size:14px}
+    .cat-list{display:flex;flex-direction:column;gap:8px}
+    .cat{display:flex;justify-content:space-between;padding:10px;border-radius:8px;background:rgba(255,255,255,.02)}
+    .match-list .mitem{padding:10px;border-radius:8px;background:rgba(255,255,255,.02);margin-bottom:8px}
+    footer{margin-top:12px;color:var(--muted);font-size:12px}
+  </style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:18px auto;color:#cfe9ff;padding:8px 20px">
+    <h1 style="margin:0;font-size:28px">Disaster Relief Coordinator</h1>
+    <div class="small">Live coordination dashboard — updates automatically</div>
+  </div>
+  <div class="wrap">
+    <div class="card reports">
+      <h1>Live User Reports</h1>
+      <div class="small">Most recent reports (auto-refresh)</div>
+      <div id="reports"></div>
+      <footer id="reports-count"></footer>
+    </div>
+
+    <div>
+      <div class="card">
+        <h1>Request Categorization</h1>
+        <div class="small">Counts by category</div>
+        <div class="cat-list" id="cats">
+          <div class="cat"><span>Food</span><strong id="c-food">0</strong></div>
+          <div class="cat"><span>Water</span><strong id="c-water">0</strong></div>
+          <div class="cat"><span>Medical</span><strong id="c-medical">0</strong></div>
+          <div class="cat"><span>Shelter</span><strong id="c-shelter">0</strong></div>
+          <div class="cat"><span>Other</span><strong id="c-other">0</strong></div>
+        </div>
+      </div>
+
+      <div class="card match-list" style="margin-top:12px">
+        <h1>Matching to Relief Centers</h1>
+        <div class="small">Recent match results</div>
+        <div id="matches"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h1>Live Availability</h1>
+      <div class="small">Map shows resources and reports</div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+const reportsEl = document.getElementById('reports');
+const matchesEl = document.getElementById('matches');
+const countEls = {food:document.getElementById('c-food'),water:document.getElementById('c-water'),medical:document.getElementById('c-medical'),shelter:document.getElementById('c-shelter'),other:document.getElementById('c-other')};
+
+// Map
+const map = L.map('map').setView([25.77,-80.19], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+let layerGroup = L.layerGroup().addTo(map);
+
+function makeReportItem(r){
+  const d = document.createElement('div'); d.className='item';
+  const icon = document.createElement('div'); icon.className='icon';
+  const kind = r.category||'other';
+  const emoji = kind==='medical'?'⚕️': kind==='water'?'💧': kind==='food'?'🍽️': kind==='shelter'?'🏠':'📍';
+  icon.textContent = emoji;
+  const meta = document.createElement('div'); meta.className='meta';
+  meta.innerHTML = `<div style="font-weight:600">${r.description}</div><div style="color:#9fb0c3;font-size:12px">${r.lat.toFixed(3)}, ${r.lon.toFixed(3)} • urgency ${r.urgency}</div>`;
+  d.appendChild(icon); d.appendChild(meta);
+  return d;
+}
+
+async function refresh(){
+  try{
+    const [reports, resources, geojson] = await Promise.all([
+      fetch('/api/reports').then(r=>r.json()),
+      fetch('/api/resources').then(r=>r.json()),
+      fetch('/api/map.geojson').then(r=>r.json())
+    ]);
+
+    // Reports list
+    reportsEl.innerHTML='';
+    reports.slice().reverse().slice(0,8).forEach(r=>reportsEl.appendChild(makeReportItem(r)));
+    document.getElementById('reports-count').textContent = `${reports.length} total reports`;
+
+    // Category counts
+    const counts = {food:0,water:0,medical:0,shelter:0,other:0};
+    reports.forEach(r=>{ counts[r.category||'other'] = (counts[r.category||'other']||0)+1 });
+    for(const k in counts) countEls[k].textContent = counts[k];
+
+    // Matches list (recent matched resources)
+    matchesEl.innerHTML='';
+    const matched = reports.filter(r=>r.matched_resource_id).slice().reverse().slice(0,6);
+    matched.forEach(r=>{
+      const el = document.createElement('div'); el.className='mitem'; el.textContent = `${r.description} → ${r.matched_resource_id}`; matchesEl.appendChild(el);
+    });
+
+    // Map: redraw from geojson
+    layerGroup.clearLayers();
+    L.geoJSON(geojson, {
+      pointToLayer: (f, latlng)=>{
+        const isReport = f.properties.kind==='report';
+        const col = isReport ? (f.properties.category==='medical'?'#ef4444':f.properties.category==='water'?'#38bdf8':f.properties.category==='food'?'#f59e0b':f.properties.category==='shelter'?'#22c55e':'#eab308') : '#10b981';
+        return L.circleMarker(latlng,{radius:8,color:col,fillOpacity:0.8,weight:2});
+      },
+      onEachFeature:(f,layer)=>{
+        const p=f.properties;
+        if(p.kind==='resource') layer.bindPopup(`<b>${p.name}</b><br/>${p.category} • cap ${p.capacity}`);
+        else layer.bindPopup(`<b>Report</b><br/>${p.description}<br/>${p.category} • urgency ${p.urgency}`);
+      }
+    }).addTo(layerGroup);
+
+  }catch(e){ console.error(e); }
+}
+
+// Initial load
+refresh();
+
+// Use Server-Sent Events for live updates (fallback: polling still available)
+if (!!window.EventSource) {
+  const es = new EventSource('/api/stream');
+  es.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      // For simple events we just refresh the whole dashboard section.
+      if (d.type === 'report' || d.type === 'match') {
+        // small debounce to avoid rapid reflows
+        if (window._ua_refresh_timeout) clearTimeout(window._ua_refresh_timeout);
+        window._ua_refresh_timeout = setTimeout(()=>{ refresh(); }, 300);
+      }
+    } catch (e) { console.error('SSE parse', e); }
+  };
+  es.onerror = (e) => { console.warn('SSE error', e); };
+} else {
+  // no EventSource support: fallback to polling
+  setInterval(refresh, 2500);
+}
+</script>
+</body>
+</html>

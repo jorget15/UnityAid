@@ -1,0 +1,18 @@
+2025-09-28 00:15:35,565 [INFO] file logging enabled: logs/unityaid.log
+2025-09-28 00:15:35,568 [INFO] seeded 4 resources
+2025-09-28 00:15:35,568 [INFO] loop_agent started (poll=0.5 seconds)
+2025-09-28 00:16:21,401 [INFO] enqueued report 84c61246: Test log to file
+2025-09-28 00:16:21,663 [INFO] loop_agent: dequeued report 84c61246
+2025-09-28 00:16:21,664 [INFO] matched report 84c61246 (cat=other) -> resource rc4 (type=medical, cap=40)
+2025-09-28 00:16:21,664 [INFO] report 84c61246 matched -> rc4; capacity 40 -> 39
+2025-09-28 00:18:00,951 [INFO] file logging enabled: logs/unityaid.log
+2025-09-28 00:18:00,954 [INFO] seeded 4 resources
+2025-09-28 00:18:00,954 [INFO] loop_agent started (poll=0.5 seconds)
+2025-09-28 00:18:23,921 [INFO] file logging enabled: logs/unityaid.log
+2025-09-28 00:18:23,925 [INFO] seeded 4 resources
+2025-09-28 00:18:23,925 [INFO] loop_agent started (poll=0.5 seconds)
+2025-09-28 00:18:50,087 [INFO] enqueued report 268f3d75: Family needs shelter
+2025-09-28 00:18:50,480 [INFO] loop_agent: dequeued report 268f3d75
+2025-09-28 00:18:50,481 [INFO] report 268f3d75 categorized: other -> shelter
+2025-09-28 00:18:50,481 [INFO] matched report 268f3d75 (cat=shelter) -> resource rc3 (type=shelter, cap=120)
+2025-09-28 00:18:50,481 [INFO] report 268f3d75 matched -> rc3; capacity 120 -> 119
